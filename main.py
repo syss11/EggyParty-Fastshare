@@ -7,14 +7,15 @@ from datetime import datetime
 from flask_cors import CORS
 import time
 import pyperclip
-
+from req import batch_submit
 oriroad=os.getcwd()
 app = Flask(__name__)
 road = r"D:\ws\MuMuPlayer\nx_main" #mumu的含有adb.exe的文件夹路径，之后程序会跳转到那里
 app.config['JSON_AS_ASCII'] = False  # 确保中文正常显示
 
-
-
+auto_eggyhub=False
+eggyhub_header={'Authorization':'Bearer 。'}
+#开启该变量并填充你的token（浏览器检查 jwt），可以自动提交（礼物结尾加空格加礼物id）
 
 CORS(app)  # 允许所有跨域请求
 # 数据存储文件路径
@@ -27,6 +28,8 @@ deltax=-178
 deltay=47
 
 def gettrans(index):
+    print(index)
+    index-=1
     colu=index//4
     row=index%4
     tra=trans[row]
@@ -34,6 +37,7 @@ def gettrans(index):
     return (tra[0],y)
 
 def getshare(index,num):
+    time.sleep(0.2)
     sharelist=[]
     tran=gettrans(index)
     for i in range(num):
@@ -43,16 +47,58 @@ def getshare(index,num):
         time.sleep(0.6)
         clip=adbclipb()
         sharelist.append(clip)
-        time.sleep(0.1)
+        time.sleep(0.2)
 
     return sharelist
-
 def startshare(info):
-    shareall=[]
-    for share in info:
-        thislist=getshare(share['order'],share['quantity'])
-        shareall.append({'name':share['name'],'codes':thislist})
+    
+    order_map= {}  # key: gift_id, value: order
+    try:
+        with open(DATA_FILE, 'r', encoding='utf-8') as f:
+            config_data = json.load(f)  # 原变量j改为config_data，命名更清晰
         
+        # 构建映射：避免后续嵌套循环查找
+        for item in config_data:
+            # 确保配置项包含必要的"id"和"order"字段（防数据异常）
+            if "id" in item and "order" in item:
+                order_map[item["id"]] = item["order"]
+            else:
+                print(f"警告：配置项 {item} 缺少'id'或'order'字段，已跳过")
+    
+    except FileNotFoundError:
+        print(f"错误：配置文件 {DATA_FILE} 不存在")
+        return []  # 文件不存在时返回空列表，避免后续报错
+    except json.JSONDecodeError:
+        print(f"错误：配置文件 {DATA_FILE} 格式错误（非合法JSON）")
+        return []
+    except Exception as e:
+        print(f"读取配置文件时发生未知错误：{str(e)}")
+        return []
+
+    # 2. 生成分享码列表（逻辑简化，避免嵌套循环）
+    shareall= []
+    for share in info:
+        # 提取礼物信息（防KeyError：用.get()获取，缺失时跳过）
+        gift_id = share.get("gift_id")
+        gift_name = share.get("name", "未知礼物")  # 缺省值避免空值
+        gift_quantity = share.get("quantity", 0)  # 数量默认为0，避免无效调用
+
+        # 校验必要参数（无效数据直接跳过，减少无效计算）
+        if not gift_id or gift_quantity <= 0:
+            print(f"警告：礼物 {gift_name} 的gift_id缺失或数量无效，已跳过")
+            continue
+
+        # 从映射字典获取order（O(1)查找，替代原嵌套循环）
+        order = order_map.get(gift_id)
+        if not order:  # 无匹配order时跳过（原逻辑的b==0）
+            print(f"警告：礼物 {gift_name}（ID:{gift_id}）未在配置文件中找到对应order，已跳过")
+            continue
+
+        # 调用getshare生成分享码（原逻辑不变，确保getshare返回合法列表）
+        thislist = getshare(order, gift_quantity)
+        if thislist:  # 仅当分享码列表非空时添加（避免空数据）
+            shareall.append({"name": gift_name, "codes": thislist})
+
     return shareall
 
 
@@ -267,6 +313,16 @@ def submit_gift_list():
         print(alls)
         save_share(alls)
         print("结果已保存到当前目录result.json内。")
+        if auto_eggyhub:
+            allids=[]
+            for i in alls:
+                n=i.get('name').split()
+                if len(n)==2:
+                    for c in i.get('codes'):
+                        allids.append({'id':int(n[1]),'code':c})
+            
+            resu=batch_submit('https://eggyhub.top/api/gifts/update',data_list=allids,headers=eggyhub_header)
+            print(resu)
         # 保存清单
         list_index = save_gift_list(list_data)
         
